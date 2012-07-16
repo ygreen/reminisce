@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no;" />
+        <meta http-equiv="Content-type" content="text/html; charset=utf-8"/>
+        <!-- iPad/iPhone specific css below, add after your main css >
+         <link rel="stylesheet" media="only screen and (max-device-width: 1024px)" href="ipad.css" type="text/css" />		
+         <link rel="stylesheet" media="only screen and (max-device-width: 480px)" href="iphone.css" type="text/css" />		
+         -->
+        <script type="text/javascript" charset="utf-8" src="phonegap-1.1.0.js"></script>
+        <link rel="stylesheet" href="jquery/1.0b2/jquery.mobile-1.0b2.min.css" />
+        <link rel="stylesheet" href="css/main.css" />
+        <script src="jquery/jquery-1.6.2.min.js"></script>
+        <script src="jquery/1.0b2/jquery.mobile-1.0b2.min.js"></script>
+        <script type="text/javascript" src="js/jqSOAPClient.js"></script>
+        <script type="text/javascript" src="js/jquery.xml2json.js"></script>
+        <script type="text/javascript" charset="utf-8">
+            
+            var endpoint = "www.snapfish.com/externalapi/v2";
+            var authcode = null;
+            var userPhotos = [];
+            var sceneReady = false;
+            var oDrawn = 0;
+            var aLoaded = 0;
+            var rLoaded = 0;
+            var requestThreshold = 100;
+            var albumThreshold = 5;
+            var drawThreshold = 50;
+            var animPointer = 0;
+            var speed = 40000;
+            var delay = 7000;
+            var sOffset = 20;
+            
+            function userPhoto(id, url, caption)
+            {
+                this.id = id;
+                this.url = url;
+                this.caption = caption;
+            }
+            
+            function getRandom(from,to)
+            {
+                var rand = Math.floor(Math.random() * (to - from + 1) + from);
+                //console.log("Random number: "+rand);
+                return rand;
+            }
+            
+            touchMove = function(event) {
+                event.preventDefault();
+            }
+            
+            function sfExtAPIRequest(sfSOAPRequest, secure)
+            {
+                SOAPClient.Proxy = (secure?"https://":"http://") + endpoint;
+                console.log("Snapfish ExtAPI Request: " + sfSOAPRequest);
+                if(rLoaded < requestThreshold) {
+                    rLoaded++;
+                    SOAPClient.SendRequest(sfSOAPRequest, sfExtAPIResponseHandler);
+                    console.log("Requests made: " + rLoaded);
+                }
+                else {
+                    console.log("Over threshold of " + threshold + " so no more requests");
+                }
+            }
+            
+            function handleLoginFail()
+            {
+                $.mobile.changePage("login.html");
+            }
+            
+            function sfExtAPIResponseHandler(respObj) {
+                if( respObj.Body.Fault ) {
+                    console.log("Snapfish ExtAPI returned ERROR(S): " + respObj.Body.Fault.detail.errors.error.errormessage); 
+                    alert(respObj.Body.Fault.detail.errors.error.errormessage, handleLoginFail);
+                }
+                else {
+                    console.log("Snapfish ExtAPI Transaction Successful");
+                    if( respObj.Body.LoginResponse ) {
+                        console.log("Handling LoginResponse");
+                        authcode = respObj.Body.LoginResponse.authcode;
+                        console.log("Authcode: " + authcode);
+                        getUserAlbums();
+                    } else if( respObj.Body.GetAlbumsResponse ) {
+                        console.log("Handling GetAlbumsResponse");
+                        for (idx in respObj.Body.GetAlbumsResponse.albums.album) {
+                            var id = respObj.Body.GetAlbumsResponse.albums.album[idx].id;
+                            if( id > -1 && aLoaded < albumThreshold) { //ignore the demo/system albums
+                                console.log("Getting album: " + id);
+                                getAlbumInfo(id);
+                            }
+                        }
+                    } else if( respObj.Body.GetAlbumInfoResponse ) {
+                        console.log("Handling GetAlbumInfoResponse");
+                        for( var i=0; i < respObj.Body.GetAlbumInfoResponse.pictures.picture.length; i++ ) {
+                            var p = respObj.Body.GetAlbumInfoResponse.pictures.picture[i];
+                            if (oDrawn < drawThreshold) {
+                                //console.log(p);
+                                buildResponseDisplayRow(new userPhoto(p.id, p.srurl, p.caption));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            function doConfirm(body,title,buttonText)
+            {
+                navigator.notification.confirm(body,null,title,buttonText);
+            }
+            
+            function buildResponseDisplayRow(uPhoto)
+            {
+                var topPos = $(window).height() + sOffset;
+                $('#mainDisplayContainer').append("<div id='userPhotoDiv"+oDrawn+"' viewcount='0' ready='true' idx='"+oDrawn+"' class='userPhotoDiv' style='position: absolute; top: "+topPos+"px; left:0px;'><img id='userPhoto"+oDrawn+"' lrurl='"+uPhoto.url+"' style='width:"+getRandom(80,85)+"%' onclick='doConfirm(\"Where You Took This Photo: "+uPhoto.id+","+uPhoto.id+"\",\""+uPhoto.caption+"\",\"Order Print,Not Now\")' /></div>");
+                oDrawn++;
+                console.log("Objects drawn: " + oDrawn);
+                if ( oDrawn == drawThreshold ) {
+                    setTimeout(destoryLoadMsg, delay-2000);
+                }
+            }
+            
+            function getUserAlbums()
+            {
+                var sr = new SOAPRequest();
+                var so = new SOAPObject("GetAlbums");
+                so.appendChild(new SOAPObject("authcode").val(authcode));
+                so.appendChild(new SOAPObject("type").val("0"));
+                sr.addBody(so);
+                sfExtAPIRequest(sr,false);
+            }
+            
+            function getAlbumInfo(id)
+            {
+                console.log("Albums loaded: " + aLoaded);
+                aLoaded++;
+                var sr = new SOAPRequest();
+                var so = new SOAPObject("GetAlbumInfo");
+                so.appendChild(new SOAPObject("authcode").val(authcode));
+                so.appendChild(new SOAPObject("AlbumId").val(id));
+                sr.addBody(so);
+                sfExtAPIRequest(sr,false);
+            }
+            
+            function getPicturesOfAlbum(id)
+            {
+                var sr = new SOAPRequest();
+                var so = new SOAPObject("GetAlbumInfo");
+                so.appendChild(new SOAPObject("authcode").val(authcode));
+                so.appendChild(new SOAPObject("AlbumId").val(id));
+                sr.addBody(so);
+                sfExtAPIRequest(sr,false);
+            }
+            
+            function sfLogin()
+            {
+                $('#loginButtonContainer').hide();
+                $('.ui-dialog').dialog('close');
+                $('#jqm-home').hide();
+                
+                console.log("Performing Snapfish login...");
+                var sr = new SOAPRequest();
+                var so = new SOAPObject("Login");
+                so.appendChild(new SOAPObject("subscriberid").val("1000000"));
+                so.appendChild(new SOAPObject("cobrandid").val("name:::SNAPFISH"));
+                so.appendChild(new SOAPObject("email").val($('#email').val()));
+                so.appendChild(new SOAPObject("password").val($('#password').val()));
+                sr.addBody(so);
+                sfExtAPIRequest(sr,true);            
+            }
+            
+            function destoryLoadMsg()
+            {
+                $('#loadingMessage').fadeOut(2500, function()
+                                             {
+                                             sceneReady = true;
+                                             });
+            }
+            
+            function doTheAmazing(readyObj)
+            {
+                
+                var div = $(readyObj);
+                var img = $('#userPhoto'+div.attr("idx"));
+                var endPos = $(window).height()+700;
+                div.attr("ready","false");
+                //console.log(" viewcount: "+div.attr("viewcount"));
+                if( div.attr("viewcount") == "0" ) {
+                    console.log("Fetching image binary for "+img.attr("id"));
+                    div.attr("viewcount","1");
+                    img.attr("src",img.attr("lrurl"));
+                }
+                div.css("left",getRandom(-100,($(window).width()-20)));
+                div.animate({"top":"-="+endPos}, speed, function() 
+                            {
+                            resetImage(readyObj);       
+                            });
+            }
+            
+            function resetImage(imgDiv)
+            {
+                //console.log("Resetting "+imgDiv.id);
+                $(imgDiv).css('top', 
+                              function(index) {
+                              var newTop = $(window).height()+sOffset;
+                              return newTop;
+                              });
+                //$(imgDiv).attr("ready","true");
+            }
+            
+            function readyImageListener()
+            {
+                var readyObj = $("div[ready='true']")[0];
+                if( readyObj ) {
+                    console.log("Casting off "+readyObj.id+" into the dark abyss!");
+                    doTheAmazing(readyObj);
+                } else {
+                    console.log("No objects ready in queue, waiting a cycle...");
+                }
+                setTimeout(readyImageListener,delay);
+            }    
+            
+            function preventBehavior(e) 
+            { 
+                e.preventDefault(); 
+            }
+            document.addEventListener("touchmove", preventBehavior, false);
+            
+            function onBodyLoad()
+            {		
+                document.addEventListener("deviceready",onDeviceReady,false);
+            }
+            
+            function onDeviceReady()
+            {
+                console.log("Basic subsystem initialized");
+                animLoadDots();
+                readyImageListener();
+            }
+            
+            function animLoadDots()
+            {
+                var div = $("#loadingMessage");
+                div.text((div.text().search(/\.\.\./g) > -1) ? div.text(div.text().replace("...","")) : div.text(div.text()+"."));
+                if(!sceneReady) { 
+                    setTimeout(animLoadDots,1000);
+                }
+            }
+            </script>
+    </head>
+    <body onload="onBodyLoad()" bgcolor="#000000">
+        <div data-role="page" data-theme="b" id="jqm-home" ontouchmove="touchMove(event)">
+            <div data-role="content" style="height:100%">
+                <div id="loginButtonContainer" style="margin-top:50%">
+                    <a href="login.html" data-role="button" data-rel="dialog" data-transition="pop">Login</a>
+                </div>
+            </div>
+        </div>
+        <div id='mainDisplayContainer' ontouchmove="touchMove(event)">
+            <div id='loadingMessage' style='width:350px;margin-left: auto; margin-right: auto; margin-top:50%; color:#FFFFFF; font: bold 25px arial'>Preparing Your Memories...</div>
+        </div>
+    </body>
+</html>
